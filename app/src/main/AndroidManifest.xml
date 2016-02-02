@@ -7,7 +7,15 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
-
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="StorePrefs" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="30" />
     </application>
 
 </manifest>

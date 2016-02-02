@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">StorePrefs</string>
+    <string name="title">Application is not compatible!</string>
+    <string name="description">Application is not compatible with one of your Xposed modules. This may cause the module or application to stop working or crash.</string>
+    <string name="are_you_sure">Are you sure you want to install this application?</string>
+    <string name="install">Install</string>
+    <string name="cancel">Cancel</string>
 </resources>
