@@ -119,7 +119,7 @@ public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygo
                     XposedHelpers.callMethod(builder, "setTitle", new Class[]{CharSequence.class}, myContext.getResources().getString(R.string.title));
                     View content = LayoutInflater.from(myContext).inflate(R.layout.warning_install, null);
                     XposedHelpers.callMethod(builder, "setView", content);
-                    XposedHelpers.callMethod(builder, "setPositiveButton", new Class[]{CharSequence.class, DialogInterface.OnClickListener.class}, myContext.getResources().getString(R.string.install), new DialogInterface.OnClickListener() {
+                    XposedHelpers.callMethod(builder, "setPositiveButton", new Class[]{CharSequence.class, DialogInterface.OnClickListener.class}, myContext.getResources().getString(R.string.update), new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
                             Object activity = XposedHelpers.callMethod(param.thisObject, "getListener");
