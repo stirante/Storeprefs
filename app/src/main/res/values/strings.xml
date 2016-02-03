@@ -5,4 +5,15 @@
     <string name="are_you_sure">Are you sure you want to install this application?</string>
     <string name="update">Update</string>
     <string name="cancel">Cancel</string>
+    <string name="pref_warning_title">Enable warning</string>
+    <string name="pref_warning_description">Warning, when user clicks update button</string>
+    <string name="pref_rapid_title">Disable rapid update</string>
+    <string name="pref_rapid_description">Rapid update is update forced by google play</string>
+    <string name="pref_update">Update preferences</string>
+    <string name="pref_reset_ignore_title">Reset update ignoring</string>
+    <string name="pref_reset_ignore_description">Reset list of version, which will be ignored in update list</string>
+    <string name="ignore_reset_done">Ignore list reset!</string>
+    <string name="pref_debug_title">Enable debug</string>
+    <string name="pref_debug_description">Enables logging informations</string>
+    <string name="pref_debug">Debugging</string>
 </resources>
