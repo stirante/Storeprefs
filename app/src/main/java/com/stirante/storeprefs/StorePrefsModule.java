@@ -36,6 +36,7 @@ public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygo
     private boolean initialized = false;
     private XSharedPreferences prefs;
     private HashMap<String, Integer> dontUpdate;
+    private boolean debug = false;
 
     @Override
     public void initZygote(IXposedHookZygoteInit.StartupParam startupParam) throws Throwable {
@@ -45,6 +46,8 @@ public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygo
                 apks.put(s, null);
             }
         }
+        prefs = new XSharedPreferences("com.stirante.storeprefs");
+        prefs.makeWorldReadable();
     }
 
     @Override
@@ -92,7 +95,8 @@ public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygo
 
     private void hookMethods(final XC_LoadPackage.LoadPackageParam packageParam, final Context ctx) throws Throwable {
         SimpleDatabase.load();
-        prefs = new XSharedPreferences("com.stirante.storeprefs");
+        prefs.reload();
+        debug = prefs.getBoolean("enable_spam", false);
         dontUpdate = (HashMap<String, Integer>) SimpleDatabase.get("dontUpdate", new HashMap<String, Integer>());
         Class<?> adapterClass = XposedHelpers.findClass("com.google.android.finsky.activities.myapps.MyAppsInstalledAdapter", packageParam.classLoader);
         Class<?> docClass = XposedHelpers.findClass("com.google.android.finsky.api.model.Document", packageParam.classLoader);
@@ -247,7 +251,8 @@ public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygo
     }
 
     private void debug(String string) {
-        XposedBridge.log("[Storeprefs] " + string);
+        if (debug)
+            XposedBridge.log("[Storeprefs] " + string);
     }
 
 }

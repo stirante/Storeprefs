@@ -12,21 +12,21 @@
             android:key="disable_rapid"
             android:summary="@string/pref_rapid_description"
             android:title="@string/pref_rapid_title" />
-        <!--<Preference-->
-            <!--android:key="reset_ignore"-->
-            <!--android:summary="@string/pref_reset_ignore_description"-->
-            <!--android:title="@string/pref_reset_ignore_title" />-->
+        <Preference
+            android:key="reset_ignore"
+            android:summary="@string/pref_reset_ignore_description"
+            android:title="@string/pref_reset_ignore_title" />
 
 
     </PreferenceCategory>
 
-    <!--<PreferenceCategory android:title="@string/pref_debug">-->
+    <PreferenceCategory android:title="@string/pref_debug">
 
-        <!--<CheckBoxPreference-->
-            <!--android:key="enable_spam"-->
-            <!--android:summary="@string/pref_debug_description"-->
-            <!--android:title="@string/pref_debug_title" />-->
+        <CheckBoxPreference
+            android:key="enable_spam"
+            android:summary="@string/pref_debug_description"
+            android:title="@string/pref_debug_title" />
 
-    <!--</PreferenceCategory>-->
+    </PreferenceCategory>
 
 </PreferenceScreen>

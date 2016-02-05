@@ -27,16 +27,16 @@ public class SettingsActivity extends AppCompatActivity {
         public void onCreate(Bundle savedInstanceState) {
             super.onCreate(savedInstanceState);
             addPreferencesFromResource(R.xml.fragment_preference);
-//            getPreferenceManager().findPreference("reset_ignore").setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
-//                @Override
-//                public boolean onPreferenceClick(Preference preference) {
-//                    SimpleDatabase.load();
-//                    SimpleDatabase.put("dontUpdate", new HashMap<String, Integer>());
-//                    SimpleDatabase.save();
-//                    Toast.makeText(getActivity(), R.string.ignore_reset_done, Toast.LENGTH_SHORT).show();
-//                    return true;
-//                }
-//            });
+            getPreferenceManager().findPreference("reset_ignore").setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                @Override
+                public boolean onPreferenceClick(Preference preference) {
+                    SimpleDatabase.load();
+                    SimpleDatabase.put("dontUpdate", new HashMap<String, Integer>());
+                    SimpleDatabase.save();
+                    Toast.makeText(getActivity(), R.string.ignore_reset_done, Toast.LENGTH_SHORT).show();
+                    return true;
+                }
+            });
         }
     }
 
