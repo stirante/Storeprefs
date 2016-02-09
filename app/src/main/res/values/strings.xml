@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">StorePrefs</string>
+    <string name="app_name">Storeprefs</string>
     <string name="title">Application is not compatible!</string>
     <string name="description">Updating this application may result in incompatibility with one of your modules and the application might crash</string>
     <string name="are_you_sure">Are you sure you want to install this application?</string>
@@ -13,7 +13,17 @@
     <string name="pref_reset_ignore_title">Reset update ignoring</string>
     <string name="pref_reset_ignore_description">Reset list of version, which will be ignored in update list</string>
     <string name="ignore_reset_done">Ignore list reset!</string>
+    <string name="save_done">Application states saved!</string>
+    <string name="restore_doing">Started restoring application states</string>
     <string name="pref_debug_title">Enable debug</string>
-    <string name="pref_debug_description">Enables logging informations</string>
+    <string name="pref_debug_description">Enables logging information</string>
     <string name="pref_debug">Debugging</string>
+    <string name="pref_save_state_description">Saves list of all apps installed on the device</string>
+    <string name="pref_save_state_title">Save application states</string>
+    <string name="pref_restore_state_description">Restores saved apps. This will only install applications saved with button above with the same version. It won\'t restore app cache! If within a minute nothing will happen open Playstore and click this again.</string>
+    <string name="pref_restore_state_title">Restore application states</string>
+    <string name="pref_intents_title">Enable enhanced installer</string>
+    <string name="pref_intents_description">By enabling this feature, you accept that application developers may download any apps to your device from play store. Use it carefully!</string>
+    <string name="installed">Installing…</string>
+    <string name="not_installed">You must enable enhanced installer to do this!</string>
 </resources>

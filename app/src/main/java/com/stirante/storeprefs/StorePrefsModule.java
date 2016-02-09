@@ -1,8 +1,12 @@
 package com.stirante.storeprefs;
 
 import android.app.Application;
+import android.app.Dialog;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
@@ -11,10 +15,13 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Toast;
 
+import com.stirante.storeprefs.utils.AppInfo;
 import com.stirante.storeprefs.utils.SimpleDatabase;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 
 import dalvik.system.PathClassLoader;
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -23,67 +30,85 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XC_MethodReplacement;
 import de.robv.android.xposed.XSharedPreferences;
 import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
+
+import static de.robv.android.xposed.XposedHelpers.*;
 
 /**
  * Created by stirante
  */
 public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
-    private final String WARN_COMPATIBILITY = "warnCompatibility";
-    private final HashMap<String, Object> apks = new HashMap<>();
+    private final HashMap<String, Object> listeners = new HashMap<>();
     private boolean initialized = false;
     private XSharedPreferences prefs;
     private HashMap<String, Integer> dontUpdate;
     private boolean debug = false;
+    private String installing = null;
 
     @Override
     public void initZygote(IXposedHookZygoteInit.StartupParam startupParam) throws Throwable {
-        XSharedPreferences enabled_modules = new XSharedPreferences("de.robv.android.xposed.installer", "enabled_modules");
+        XSharedPreferences enabled_modules = new XSharedPreferences(Commons.XPOSED_INSTALLER_PACKAGE, "enabled_modules");
+        enabled_modules.makeWorldReadable();
         for (String s : enabled_modules.getAll().keySet()) {
             if (enabled_modules.getInt(s, 0) == 1) {
-                apks.put(s, null);
+                listeners.put(s, null);
             }
         }
-        prefs = new XSharedPreferences("com.stirante.storeprefs");
+        prefs = new XSharedPreferences(Commons.MODULE_PACKAGE);
         prefs.makeWorldReadable();
     }
 
     @Override
     public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam packageParam) throws Throwable {
-        if (packageParam.packageName.startsWith("com.android.vending")) {
-            XposedHelpers.findAndHookMethod(Application.class, "attach", Context.class, new XC_MethodHook() {
+        if (packageParam.packageName.startsWith(Commons.PLAYSTORE_PACKAGE)) {
+            prefs.makeWorldReadable();
+            prefs.reload();
+            findAndHookMethod(Application.class, "attach", Context.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     Context context = (Context) param.args[0];
                     if (!initialized)
                         loadModules(context);
-                    hookMethods(packageParam, context);
+                    try {
+                        hookMethods(packageParam, context);
+                    } catch (Throwable t) {
+                        XposedBridge.log(t);
+                        if (checkLuckyPatcher(context)) XposedBridge.log("LuckyPatcher");
+                    }
                 }
             });
         }
     }
 
     private void loadModules(Context ctx) {
-        for (String s : apks.keySet()) {
+        for (final String s : listeners.keySet()) {
             try {
-                ApplicationInfo app = ctx.getPackageManager().getApplicationInfo(s, PackageManager.GET_META_DATA);
-                if (app.metaData.containsKey("storeprefs_mainclass")) {
-                    PathClassLoader pathClassLoader = new dalvik.system.PathClassLoader(new File(app.publicSourceDir).getAbsolutePath(), ClassLoader.getSystemClassLoader());
-                    try {
-                        Class<?> clz = Class.forName(app.metaData.getString("storeprefs_mainclass"), true, pathClassLoader);
-                        final Object listener = clz.newInstance();
-                        debug("Loaded class " + clz.toString());
-                        new Thread(new Runnable() {
-                            @Override
-                            public void run() {
-                                XposedHelpers.callMethod(listener, "init");
-                            }
-                        }).start();
-                        apks.put(s, listener);
-                    } catch (Exception e) {
-                        e.printStackTrace();
+                if (listeners.get(s) != null) {
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            callMethod(listeners.get(s), "init");
+                        }
+                    }).start();
+                } else {
+                    ApplicationInfo app = ctx.getPackageManager().getApplicationInfo(s, PackageManager.GET_META_DATA);
+                    if (app.metaData.containsKey(Commons.METADATA_MAINCLASS)) {
+                        PathClassLoader pathClassLoader = new dalvik.system.PathClassLoader(new File(app.publicSourceDir).getAbsolutePath(), ClassLoader.getSystemClassLoader());
+                        try {
+                            Class<?> clz = Class.forName(app.metaData.getString(Commons.METADATA_MAINCLASS), true, pathClassLoader);
+                            final Object listener = clz.newInstance();
+                            debug("Loaded class " + clz.toString());
+                            new Thread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    callMethod(listener, "init");
+                                }
+                            }).start();
+                            listeners.put(s, listener);
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
                     }
                 }
             } catch (PackageManager.NameNotFoundException e) {
@@ -94,25 +119,25 @@ public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygo
     }
 
     private void hookMethods(final XC_LoadPackage.LoadPackageParam packageParam, final Context ctx) throws Throwable {
+        final ClassLoader loader = packageParam.classLoader;
         SimpleDatabase.load();
-        prefs.reload();
-        debug = prefs.getBoolean("enable_spam", false);
-        dontUpdate = (HashMap<String, Integer>) SimpleDatabase.get("dontUpdate", new HashMap<String, Integer>());
-        Class<?> adapterClass = XposedHelpers.findClass("com.google.android.finsky.activities.myapps.MyAppsInstalledAdapter", packageParam.classLoader);
-        Class<?> docClass = XposedHelpers.findClass("com.google.android.finsky.api.model.Document", packageParam.classLoader);
-        Class<?> installPoliciesClass = XposedHelpers.findClass("com.google.android.finsky.installer.InstallPolicies", packageParam.classLoader);
-        XposedHelpers.findAndHookMethod(adapterClass, "access$300$46a91253", adapterClass, docClass, View.class, ViewGroup.class, XposedHelpers.findClass("com.google.android.finsky.layout.play.PlayStoreUiElementNode", packageParam.classLoader), new XC_MethodHook() {
+        debug = prefs.getBoolean(Commons.PREFERENCE_DEBUG, false);
+        dontUpdate = (HashMap<String, Integer>) SimpleDatabase.get(Commons.DATA_DONT_UPDATE, new HashMap<String, Integer>());
+        Class<?> adapterClass = findClass(Commons.CLASS_MY_APPS_INSTALLED_ADAPTER, loader);
+        Class<?> docClass = findClass(Commons.CLASS_DOCUMENT, loader);
+        Class<?> installPoliciesClass = findClass(Commons.CLASS_INSTALL_POLICIES, loader);
+        findAndHookMethod(adapterClass, "access$300$46a91253", adapterClass, docClass, View.class, ViewGroup.class, findClass(Commons.CLASS_PLAYSTORE_UI_ELEMENT_NODE, loader), new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                 View inflate = (View) param.getResult();
                 final Object adapter = param.args[0];
                 Object doc = param.args[1];
-                if ((boolean) XposedHelpers.callMethod(doc, "hasDetails")) {
-                    Object appDetails = XposedHelpers.callMethod(doc, "getAppDetails");
-                    final String packageName = (String) XposedHelpers.getObjectField(appDetails, "packageName");
-                    final int versionCode = (int) XposedHelpers.getObjectField(appDetails, "versionCode");
-                    Object packageState = XposedHelpers.callMethod(XposedHelpers.getObjectField(XposedHelpers.getObjectField(adapter, "mAppStates"), "mPackageManager"), "get", packageName);
-                    int localVersion = XposedHelpers.getIntField(packageState, "installedVersion");
+                if ((boolean) callMethod(doc, "hasDetails")) {
+                    Object appDetails = callMethod(doc, "getAppDetails");
+                    final String packageName = (String) getObjectField(appDetails, "packageName");
+                    final int versionCode = (int) getObjectField(appDetails, "versionCode");
+                    Object packageState = callMethod(getObjectField(getObjectField(adapter, "mAppStates"), "mPackageManager"), "get", packageName);
+                    int localVersion = getIntField(packageState, "installedVersion");
                     if (localVersion < versionCode && (!dontUpdate.containsKey(packageName) || dontUpdate.get(packageName) < versionCode)) {
                         inflate.setOnLongClickListener(new View.OnLongClickListener() {
                             @Override
@@ -120,7 +145,7 @@ public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygo
                                 debug("Ignoring update for " + packageName + " since " + versionCode);
                                 dontUpdate.put(packageName, versionCode);
                                 SimpleDatabase.saveAsync();
-                                XposedHelpers.callMethod(adapter, "notifyDataSetInvalidated");
+                                callMethod(adapter, "notifyDataSetInvalidated");
                                 Toast.makeText(ctx, "Adding to ignored updates", Toast.LENGTH_LONG).show();
                                 return true;
                             }
@@ -129,15 +154,15 @@ public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygo
                 }
             }
         });
-        XposedHelpers.findAndHookMethod(installPoliciesClass, "canUpdateApp", XposedHelpers.findClass("com.google.android.finsky.appstate.PackageStateRepository$PackageState", packageParam.classLoader), docClass, new XC_MethodHook() {
+        findAndHookMethod(installPoliciesClass, "canUpdateApp", findClass(Commons.CLASS_PACKAGE_STATE, loader), docClass, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                 if ((boolean) param.getResult()) {
                     Object doc = param.args[1];
-                    if ((boolean) XposedHelpers.callMethod(doc, "hasDetails")) {
-                        Object appDetails = XposedHelpers.callMethod(doc, "getAppDetails");
-                        String packageName = (String) XposedHelpers.getObjectField(appDetails, "packageName");
-                        int versionCode = (int) XposedHelpers.getObjectField(appDetails, "versionCode");
+                    if ((boolean) callMethod(doc, "hasDetails")) {
+                        Object appDetails = callMethod(doc, "getAppDetails");
+                        String packageName = (String) getObjectField(appDetails, "packageName");
+                        int versionCode = (int) getObjectField(appDetails, "versionCode");
                         if (dontUpdate.containsKey(packageName) && dontUpdate.get(packageName) >= versionCode) {
                             param.setResult(false);
                         }
@@ -146,88 +171,163 @@ public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygo
             }
         });
         //warn user
-        if (prefs.getBoolean("enable_warning", false)) {
-            XposedHelpers.findAndHookMethod("com.google.android.finsky.billing.lightpurchase.LightPurchaseFlowActivity", packageParam.classLoader, "acquire", Bundle.class, boolean.class, new XC_MethodHook() {
+        if (prefs.getBoolean(Commons.PREFERENCE_WARNING, false)) {
+            findAndHookMethod(Commons.CLASS_LIGHT_PURCHASE_FLOW_ACTIVITY, loader, "acquire", Bundle.class, boolean.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    Object warnCompatibility = XposedHelpers.getAdditionalInstanceField(param.thisObject, WARN_COMPATIBILITY);
+                    Object warnCompatibility = getAdditionalInstanceField(param.thisObject, Commons.ADD_FIELD_WARN_COMPATIBILITY);
                     if (warnCompatibility != null && !((boolean) warnCompatibility)) return;
-                    Object doc = XposedHelpers.getObjectField(param.thisObject, "mDoc");
-                    if ((boolean) XposedHelpers.callMethod(doc, "hasDetails")) {
-                        Object appDetails = XposedHelpers.callMethod(doc, "getAppDetails");
-                        String packageName = (String) XposedHelpers.getObjectField(appDetails, "packageName");
-                        String versionString = (String) XposedHelpers.getObjectField(appDetails, "versionString");
-                        int versionCode = (int) XposedHelpers.getObjectField(appDetails, "versionCode");
+                    Object doc = getObjectField(param.thisObject, "mDoc");
+                    if ((boolean) callMethod(doc, "hasDetails")) {
+                        Object appDetails = callMethod(doc, "getAppDetails");
+                        String packageName = (String) getObjectField(appDetails, "packageName");
+                        String versionString = (String) getObjectField(appDetails, "versionString");
+                        int versionCode = (int) getObjectField(appDetails, "versionCode");
                         if (!shouldUserUpdate(packageName, versionCode, versionString)) {
-                            XposedHelpers.setAdditionalInstanceField(param.thisObject, WARN_COMPATIBILITY, true);
-                            Object dialog = XposedHelpers.newInstance(XposedHelpers.findClass("com.google.android.finsky.billing.DownloadNetworkDialogFragment", packageParam.classLoader));
+                            setAdditionalInstanceField(param.thisObject, Commons.ADD_FIELD_WARN_COMPATIBILITY, true);
+                            Object dialog = newInstance(findClass(Commons.CLASS_DOWNLOAD_NETWORK_DIALOG_FRAGMENT, loader));
                             Bundle arguments = new Bundle();
-                            arguments.putBoolean(WARN_COMPATIBILITY, true);
-                            XposedHelpers.callMethod(dialog, "setArguments", arguments);
-                            XposedHelpers.callMethod(dialog, "show", XposedHelpers.callMethod(param.thisObject, "getSupportFragmentManager"), "LightPurchaseFlowActivity.errorDialog");
+                            arguments.putBoolean(Commons.ADD_FIELD_WARN_COMPATIBILITY, true);
+                            callMethod(dialog, "setArguments", arguments);
+                            callMethod(dialog, "show", callMethod(param.thisObject, "getSupportFragmentManager"), "LightPurchaseFlowActivity.errorDialog");
                             param.setResult(null);
                         }
                     }
                 }
             });
             //change dialog appearance
-            XposedHelpers.findAndHookMethod("com.google.android.finsky.billing.DownloadNetworkDialogFragment", packageParam.classLoader, "onCreateDialog", Bundle.class, new XC_MethodHook() {
+            findAndHookMethod(Commons.CLASS_DOWNLOAD_NETWORK_DIALOG_FRAGMENT, loader, "onCreateDialog", Bundle.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(final MethodHookParam param) throws Throwable {
-                    Bundle arguments = (Bundle) XposedHelpers.getObjectField(param.thisObject, "mArguments");
-                    if (arguments.getBoolean(WARN_COMPATIBILITY, false)) {
-                        Context context = (Context) XposedHelpers.callMethod(param.thisObject, "getActivity");
-                        Object builder = XposedHelpers.newInstance(XposedHelpers.findClass("com.google.android.wallet.ui.common.AlertDialogBuilderCompat", packageParam.classLoader), new Class[]{Context.class, byte.class}, context, (byte) 0);
-                        Context myContext = context.createPackageContext("com.stirante.storeprefs", Context.CONTEXT_IGNORE_SECURITY);
-                        XposedHelpers.callMethod(builder, "setTitle", new Class[]{CharSequence.class}, myContext.getResources().getString(R.string.title));
+                    Bundle arguments = (Bundle) getObjectField(param.thisObject, "mArguments");
+                    if (arguments.getBoolean(Commons.ADD_FIELD_WARN_COMPATIBILITY, false)) {
+                        Context context = (Context) callMethod(param.thisObject, "getActivity");
+                        Object builder = newInstance(findClass(Commons.CLASS_ALERT_DIALOG_BUILDER_COMPAT, loader), new Class[]{Context.class, byte.class}, context, (byte) 0);
+                        Context myContext = context.createPackageContext(Commons.MODULE_PACKAGE, Context.CONTEXT_IGNORE_SECURITY);
+                        callMethod(builder, "setTitle", new Class[]{CharSequence.class}, myContext.getResources().getString(R.string.title));
                         View content = LayoutInflater.from(myContext).inflate(R.layout.warning_install, null);
-                        XposedHelpers.callMethod(builder, "setView", content);
-                        XposedHelpers.callMethod(builder, "setPositiveButton", new Class[]{CharSequence.class, DialogInterface.OnClickListener.class}, myContext.getResources().getString(R.string.update), new DialogInterface.OnClickListener() {
+                        callMethod(builder, "setView", content);
+                        callMethod(builder, "setPositiveButton", new Class[]{CharSequence.class, DialogInterface.OnClickListener.class}, myContext.getResources().getString(R.string.update), new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialog, int which) {
-                                Object activity = XposedHelpers.callMethod(param.thisObject, "getListener");
-                                XposedHelpers.setAdditionalInstanceField(activity, WARN_COMPATIBILITY, false);
-                                XposedHelpers.callMethod(activity, "onDownloadOk", false, false);
+                                Object activity = callMethod(param.thisObject, "getListener");
+                                setAdditionalInstanceField(activity, Commons.ADD_FIELD_WARN_COMPATIBILITY, false);
+                                callMethod(activity, "onDownloadOk", false, false);
                             }
                         });
-                        XposedHelpers.callMethod(builder, "setNegativeButton", new Class[]{CharSequence.class, DialogInterface.OnClickListener.class}, myContext.getResources().getString(R.string.cancel), new DialogInterface.OnClickListener() {
+                        callMethod(builder, "setNegativeButton", new Class[]{CharSequence.class, DialogInterface.OnClickListener.class}, myContext.getResources().getString(R.string.cancel), new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialog, int which) {
-                                XposedHelpers.callMethod(XposedHelpers.callMethod(param.thisObject, "getListener"), "onDownloadCancel");
+                                callMethod(callMethod(param.thisObject, "getListener"), "onDownloadCancel");
                             }
                         });
-                        param.setResult(XposedHelpers.callMethod(builder, "create"));
+                        Dialog dialog = (Dialog) callMethod(builder, "create");
+
+                        param.setResult(dialog);
                     }
                 }
             });
         }
         //disable auto update
-        XposedHelpers.findAndHookMethod(installPoliciesClass, "getUpdateWarningsForDocument", docClass, boolean.class, new XC_MethodHook() {
+        findAndHookMethod(installPoliciesClass, "getUpdateWarningsForDocument", docClass, boolean.class, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                 Object warnings = param.getResult();
                 Object doc = param.args[0];
-                if ((boolean) XposedHelpers.callMethod(doc, "hasDetails")) {
-                    Object appDetails = XposedHelpers.callMethod(doc, "getAppDetails");
-                    String packageName = (String) XposedHelpers.getObjectField(appDetails, "packageName");
-                    int versionCode = (int) XposedHelpers.getObjectField(appDetails, "versionCode");
+                if ((boolean) callMethod(doc, "hasDetails")) {
+                    Object appDetails = callMethod(doc, "getAppDetails");
+                    String packageName = (String) getObjectField(appDetails, "packageName");
+                    int versionCode = (int) getObjectField(appDetails, "versionCode");
                     if (!canAutoUpdate(packageName, versionCode))
-                        XposedHelpers.setBooleanField(warnings, "autoUpdateDisabled", true);
+                        setBooleanField(warnings, "autoUpdateDisabled", true);
                 }
             }
         });
-        if (prefs.getBoolean("disable_rapid", false)) {
+        if (prefs.getBoolean(Commons.PREFERENCE_RAPID, false)) {
             //disable rapid update
-            XposedHelpers.findAndHookMethod("com.google.android.finsky.autoupdate.RapidAutoUpdatePolicy", packageParam.classLoader, "apply", XposedHelpers.findClass("com.google.android.finsky.autoupdate.AutoUpdateEntry", packageParam.classLoader), XC_MethodReplacement.DO_NOTHING);
+            findAndHookMethod(Commons.CLASS_RAPID_AUTO_UPATE_POLICY, loader, "apply", findClass(Commons.CLASS_AUTO_UPDATE_ENTRY, loader), XC_MethodReplacement.DO_NOTHING);
         }
+        findAndHookMethod(Commons.CLASS_APP_STATES, loader, "getApp", String.class, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                if (installing != null && param.args[0].equals(installing)) {
+                    try {
+                        setIntField(getObjectField(param.getResult(), "packageManagerState"), "installedVersion", 1);
+                        setIntField(getObjectField(param.getResult(), "installerData"), "desiredVersion", 1);
+                    } catch (Throwable t) {
+                        //shhhh...
+                    }
+                    installing = null;
+                }
+            }
+        });
+        IntentFilter iF = new IntentFilter(Commons.ACTION_INSTALL);
+        ctx.registerReceiver(new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (prefs.getBoolean(Commons.PREFERENCE_INTENTS, false)) {
+                    intent.setAction(Commons.ACTION_INSTALL_RESULT);
+                    intent.putExtra("success", false);
+                    context.sendBroadcast(intent);
+                    return;
+                }
+                Object finsky = callStaticMethod(findClass(Commons.CLASS_FINSKY_APP, loader), "get");
+                Object installer = getObjectField(finsky, "mInstaller");
+                String packageName = intent.getExtras().getString("packageName");
+                String title = intent.getExtras().getString("title");
+                int versionCode = intent.getExtras().getInt("versionCode");
+                callMethod(installer, "setVisibility", packageName, true, true, true);
+                String account = (String) callStaticMethod(findClass(Commons.CLASS_APP_DETAILS_ACCOUNT, loader), "getAppDetailsAccount", packageName, callMethod(finsky, "getCurrentAccountName"), getObjectField(finsky, "mAppStates"), getObjectField(finsky, "mLibraries"));
+                installing = packageName;//this is so stupid that i don't believe i'm actually doing this
+                callMethod(installer, "requestInstall", packageName, versionCode, account, title, false, "storeprefs", 1, 0);
+                debug("(Install intent) Installing " + packageName + " version code: " + versionCode);
+                intent.setAction(Commons.ACTION_INSTALL_RESULT);
+                intent.putExtra("success", true);
+                context.sendBroadcast(intent);
+            }
+        }, iF);
+        iF = new IntentFilter(Commons.ACTION_RESTORE);
+        ctx.registerReceiver(new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (prefs.getBoolean(Commons.PREFERENCE_INTENTS, false)) {
+                    intent.setAction(Commons.ACTION_INSTALL_RESULT);
+                    intent.putExtra("success", false);
+                    context.sendBroadcast(intent);
+                    return;
+                }
+                List<AppInfo> appList = (List<AppInfo>) SimpleDatabase.get(Commons.DATA_RESTORE, new ArrayList<AppInfo>());
+                Object finsky = callStaticMethod(findClass(Commons.CLASS_FINSKY_APP, loader), "get");
+                Object appStates = getObjectField(finsky, "mAppStates");
+                Object installer = getObjectField(finsky, "mInstaller");
+                for (AppInfo app : appList) {
+                    Object info = callMethod(appStates, "getApp", app.packageName);
+                    if (info != null) {
+                        Object packageState = getObjectField(info, "packageManagerState");
+                        if (packageState != null && getIntField(packageState, "installedVersion") == app.versionCode) {
+                            debug("Skipped " + app.packageName + " since exactly the same version is already installed");
+                            continue;
+                        }
+                    }
+                    callMethod(installer, "setVisibility", app.packageName, true, true, true);
+                    String account = (String) callStaticMethod(findClass(Commons.CLASS_APP_DETAILS_ACCOUNT, loader), "getAppDetailsAccount", app.packageName, callMethod(finsky, "getCurrentAccountName"), getObjectField(finsky, "mAppStates"), getObjectField(finsky, "mLibraries"));
+                    installing = app.packageName;//this is so stupid that i don't believe i'm actually doing this
+                    callMethod(installer, "requestInstall", app.packageName, app.versionCode, account, app.title, false, "storeprefs", 1, 0);
+                    debug("(Restore intent) Installing " + app.packageName + " version code: " + app.versionCode);
+                }
+                intent.setAction(Commons.ACTION_INSTALL_RESULT);
+                intent.putExtra("success", true);
+                context.sendBroadcast(intent);
+            }
+        }, iF);
     }
 
     private boolean shouldUserUpdate(String packageName, int versionCode, String versionString) {
         debug("User wants to update " + packageName + " version: " + versionString + " (code: " + versionCode + ")");
-        for (Object listener : apks.values()) {
+        for (Object listener : listeners.values()) {
             if (listener == null) continue;
             try {
-                if (!((boolean) XposedHelpers.callMethod(listener, "shouldUserUpdate", packageName, versionCode, versionString)))
+                if (!((boolean) callMethod(listener, "shouldUserUpdate", packageName, versionCode, versionString)))
                     return false;
             } catch (Throwable t) {
                 t.printStackTrace();
@@ -238,10 +338,10 @@ public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygo
 
     private boolean canAutoUpdate(String packageName, int versionCode) {
         debug("Store tries to auto update " + packageName + " version code: " + versionCode);
-        for (Object listener : apks.values()) {
+        for (Object listener : listeners.values()) {
             if (listener == null) continue;
             try {
-                if (!((boolean) XposedHelpers.callMethod(listener, "canAutoUpdate", packageName, versionCode)))
+                if (!((boolean) callMethod(listener, "canAutoUpdate", packageName, versionCode)))
                     return false;
             } catch (Throwable t) {
                 t.printStackTrace();
@@ -255,4 +355,16 @@ public class StorePrefsModule implements IXposedHookLoadPackage, IXposedHookZygo
             XposedBridge.log("[Storeprefs] " + string);
     }
 
+    private boolean checkLuckyPatcher(Context context) {
+        return packageExists("com.dimonvideo.luckypatcher", context) || packageExists("com.chelpus.lackypatch", context) || packageExists("com.android.vending.billing.InAppBillingService.LUCK", context);
+    }
+
+    private boolean packageExists(final String packageName, Context context) {
+        try {
+            ApplicationInfo info = context.getPackageManager().getApplicationInfo(packageName, 0);
+            return info != null;
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
 }
